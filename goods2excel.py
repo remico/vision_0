@@ -9,8 +9,7 @@ __author__ = 'remico'
 
 from xml.etree.ElementTree import ElementTree
 from abc import ABC, abstractmethod
-from bs4 import BeautifulSoup
-#from datetime import datetime
+from bs4 import BeautifulSoup, Tag
 import xlsxwriter
 import sys, os, glob
 
@@ -38,17 +37,16 @@ class IBuilder(ABC):
 
 class XlsxBuilder(IBuilder):
     def __init__(self):
-        self.filename = "output_.xlsx"# % datetime.now().ctime()
+        self.filename = "output_.xlsx"
         self.book = xlsxwriter.Workbook(self.filename)
         self.sheet = self.book.add_worksheet("goods")
         self.fill_header()
-        print("'%s' created" % self.filename)
         self.current_row = 2  # there is the header in the first row
 
         self.cell_format = self.book.add_format()
         self.cell_format.set_text_wrap()
         self.cell_format.set_align('vjustify')
-        self.cell_format.set_align('top')
+        # self.cell_format.set_align('top')
 
     def fill_header(self):
         header_format = self.book.add_format()
@@ -74,6 +72,7 @@ class XlsxBuilder(IBuilder):
 
     def get_result(self):
         self.book.close()
+        print("'%s' created" % self.filename)
         return self.book
 
     def increment_row(self):
@@ -87,8 +86,23 @@ class XlsxBuilder(IBuilder):
         cleantext = ""
         if text is not None:
             soup = BeautifulSoup(text)
-            cleantext = " ".join((s.strip() for s in soup.get_text().split('\n')))
-            # cleantext = soup.get_text().strip()
+
+            rows = []
+            # utilize the direct child objects
+            for tag in soup.children:
+                if not isinstance(tag, Tag):
+                    continue
+                # parse an html table
+                if tag.name == 'table':
+                    for row in tag.find_all('tr'):
+                        r = '   '.join([col.get_text().strip()
+                                       for col in row.find_all('td')])
+                        rows.append(r)
+                # parse simple html paragraphs
+                else:
+                    rows.append(tag.get_text().strip())
+            cleantext = "\n".join(rows).strip()
+
         self.sheet.write('B%d' % self.current_row, cleantext, self.cell_format)
 
     def convert_price(self, text=""):
@@ -113,16 +127,23 @@ class GoodsReader(object):
 
     def parse_goods(self):
         goods = self.database.findall('table')
+        len_ = len(goods)
+        denominator_ = 20
+        part_ = len_ // denominator_
         records = ({column.get('name'): column.text
                     for column in item.getiterator('column')}
                         for item in goods)
-        for rec in records:
+        for i, rec in enumerate(records):
             self.builder.convert_articul(rec['name'])
             self.builder.convert_description(rec['content'])
             self.builder.convert_price(rec['price'])
             self.builder.convert_price_retail(rec['price_retail'])
             self.builder.convert_sizes(rec['har_size'])
             self.builder.increment_row()
+            # indicate progress
+            if not i % part_:
+                print('#', end='' if i < part_*denominator_ else '\n')
+                sys.stdout.flush()
 
 
 if __name__ == '__main__':
